@@ -1,26 +1,53 @@
 # Reasoning
 
-## Database choice
-PostgreSQL is the right default for this prototype because it keeps the system to one operational dependency while covering the three data shapes the app needs: raw conversations, topic rows, and time-bucketed trend snapshots. It is easy to inspect locally, works cleanly with SQLAlchemy and Alembic, and matches the implemented models without introducing a second storage engine.
+I treated this as a weekend prototype, so I started with one question: what is the smallest system that still feels real to a PM reading the output?
 
-The trade-off is that PostgreSQL is not the fastest path for very large vector workloads or high-frequency analytics, but that is acceptable here. The assignment values a working, debuggable system more than a production-scale infrastructure stack.
+The answer I landed on was a single FastAPI service with PostgreSQL behind it, a background worker doing the analysis, and a small set of API endpoints that expose the result in plain language. That kept the system simple enough to build and debug, but still close to the shape of a product someone could actually use.
 
-## Clustering choice
-Sentence embeddings plus HDBSCAN is a good fit for evolving support topics because it groups semantically similar user requests without forcing a fixed number of clusters. HDBSCAN also handles noise better than keyword rules, which matters when support traffic includes mixed intents, one-off complaints, and short messages.
+## How I chose the database
 
-The worker keeps deterministic fallbacks so the project still runs in a minimal environment, but the intended path is embedding-based clustering with periodic refreshes. The trade-off is that topic quality depends on user text quality and embedding availability, so cluster labels are approximate rather than human-curated.
+I kept coming back to PostgreSQL because it covers the three kinds of data this app needs without making the deployment feel like a science project.
 
-To avoid over-promoting tiny, obviously unrelated groups, the clustering layer also demotes small two-point clusters when the vectors are too far apart. That keeps the weekend prototype conservative rather than inventing topic structure from noise.
+Raw conversations fit naturally in relational tables. Topic summaries and topic stats also fit there. And the time-bucketed trend snapshots are easy to store and query in the same place. That means one database, one migration path, one mental model.
 
-## SDK choice
-The ingest API accepts Agnost SDK-shaped payloads because that keeps the contract realistic while still making local development easy. The accepted payloads are JSON objects with session metadata, message arrays, and optional metadata, which means the same shape can be replayed from a webhook, a file, or a future SDK client.
+I did not add a separate vector database or analytics store because that would have made the demo harder to reason about and harder to run locally. PostgreSQL is not the absolute best tool for every workload here, but it is the right one for this assignment because it keeps the prototype understandable and debuggable.
 
-The trade-off is that the prototype does not depend on a real upstream SDK at runtime, so the integration boundary is modeled rather than hard-coupled. That is the right split for an assessment: preserve the product shape without introducing unnecessary external dependencies.
+If this were a larger production system, I would probably split vectors and analytics into separate services later. For the weekend version, that would be extra architecture without enough payoff.
 
-## Trade-offs
-This build intentionally favors one PostgreSQL instance, a simple FastAPI surface, and a background worker over extra infrastructure. That keeps setup friction low and makes debugging straightforward, but it means the prototype is batch-oriented and not tuned for large-scale online clustering.
+## How I chose the clustering approach
 
-That is the correct trade for the assignment. It proves the product loop first, keeps the API usable, and leaves room to swap in stronger storage or clustering services later.
+The goal was not to sort conversations by keywords. The goal was to notice when people were talking about the same thing even if they used different words.
 
-## With A Month
-With another month, I would add a human review loop for topic merging and naming, stronger evaluation for topic quality and sentiment accuracy, and a real vector store or managed embedding index instead of the current lightweight fallback path. I would also add tenant-aware filtering, a simple dashboard for PM exploration, and more explicit alert tuning so the system can separate new product issues from general support noise more reliably.
+That is why I used sentence embeddings plus HDBSCAN. Embeddings let the model compare meaning rather than exact phrasing, and HDBSCAN is useful because it does not force every conversation into a cluster. That matters a lot in support traffic, where some messages are real themes, some are noise, and some are one-off edge cases.
+
+I also kept deterministic fallbacks in place so the project still runs in a lightweight environment. The fallback path is intentionally conservative. If a tiny cluster looks too unstable or too far apart, it gets treated as noise instead of being turned into a fake topic. I would rather miss a weak topic than invent a bad one.
+
+There is still a trade-off: the quality of the topics depends on the quality of the user text and the embeddings available at runtime. That is acceptable for this prototype because the assignment values a working PM insight loop more than a perfect topic model.
+
+## Why the SDK-shaped ingest exists
+
+I made the ingest API accept Agnost SDK-shaped payloads because that keeps the contract realistic without tying the prototype to a specific upstream runtime.
+
+The payload shape is simple: session metadata, a message array, and optional metadata. That is enough to mock a webhook, replay a file, or later connect a real SDK client. It also keeps the ingest boundary honest. The system behaves like it is receiving production logs, but it does not need a live external dependency just to run locally.
+
+That seemed like the right compromise for an assessment. It preserves the product story without making the implementation brittle.
+
+## What I chose not to build
+
+I kept the build intentionally small: one database, one API, one worker. No queue service. No dedicated vector store. No dashboard. No user-facing moderation loop.
+
+That is not because those things are unimportant. It is because they would have made the prototype slower to understand and harder to verify, while not improving the actual PM value very much. The important thing here is the loop from conversation to topic to insight. Everything else can wait.
+
+The upside of that choice is speed and clarity. The downside is that the system is batch-oriented and not tuned for huge online workloads. That is fine for now because the assignment asked for a working repo that is simpler and easier, not an overbuilt platform.
+
+## What I would do with a month
+
+With more time, I would harden the system in the places that matter most:
+
+- add a human review loop for merging and renaming topics
+- evaluate topic quality more rigorously instead of relying on intuition
+- improve alert tuning so it separates real product issues from general support noise
+- add tenant-aware filtering and a small PM dashboard
+- replace the lightweight vector fallback with a real vector store or managed embedding index
+
+The weekend version proves the loop. The month-long version would make that loop trustworthy enough for a real team to depend on.
