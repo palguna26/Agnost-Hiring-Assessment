@@ -80,11 +80,22 @@ def _conversation_snippet(conversation: Conversation, limit: int = 160) -> str:
     for message in messages:
         if not isinstance(message, dict):
             continue
+        role = str(message.get("role", "")).lower()
         content = message.get("content")
+        if role != "user":
+            continue
         if isinstance(content, str) and content.strip():
             parts.append(content.strip())
 
     snippet = " ".join(parts).strip()
+    if not snippet:
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                snippet = content.strip()
+                break
     return snippet[:limit]
 
 

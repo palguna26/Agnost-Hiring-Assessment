@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from agnost_analytics.db.models import Conversation, Topic, TopicTrendSnapshot
 from agnost_analytics.services.clustering import cluster_embeddings
-from agnost_analytics.services.embeddings import embed_conversations
+from agnost_analytics.services.embeddings import embed_conversations, semantic_signature, _sentence_transformer_model
 from agnost_analytics.services.sentiment import label_sentiment
 from agnost_analytics.services.topic_labeling import label_topic
 
@@ -211,15 +211,31 @@ def process_pending_sessions(db: Session, batch_size: int = 100) -> int:
 
     texts = [_conversation_user_text(conversation) for conversation in pending]
     embeddings = embed_conversations(texts)
-    cluster_labels = cluster_embeddings(embeddings, min_cluster_size=2)
 
-    grouped_indices: dict[int, list[int]] = defaultdict(list)
-    noise_indices: list[int] = []
-    for index, cluster_label in enumerate(cluster_labels):
-        if cluster_label == -1:
-            noise_indices.append(index)
-        else:
-            grouped_indices[cluster_label].append(index)
+    if _sentence_transformer_model() is None:
+        grouped_by_signature: dict[tuple[str, ...], list[int]] = defaultdict(list)
+        for index, text in enumerate(texts):
+            grouped_by_signature[semantic_signature(text)].append(index)
+
+        grouped_indices: dict[int, list[int]] = {}
+        noise_indices: list[int] = []
+        synthetic_cluster_id = 0
+        for signature, indices in grouped_by_signature.items():
+            if len(indices) < 2:
+                noise_indices.extend(indices)
+                continue
+            grouped_indices[synthetic_cluster_id] = indices
+            synthetic_cluster_id += 1
+    else:
+        cluster_labels = cluster_embeddings(embeddings, min_cluster_size=2)
+
+        grouped_indices = defaultdict(list)
+        noise_indices = []
+        for index, cluster_label in enumerate(cluster_labels):
+            if cluster_label == -1:
+                noise_indices.append(index)
+            else:
+                grouped_indices[cluster_label].append(index)
 
     accumulators: dict[tuple[int, str], TrendAccumulator] = defaultdict(TrendAccumulator)
 

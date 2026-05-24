@@ -4,6 +4,16 @@ from collections import Counter
 import re
 from typing import Sequence
 
+from agnost_analytics.services.embeddings import SEMANTIC_BUCKET_ORDER, semantic_signature
+
+DISPLAY_NAME_MAP = {
+    "billing_refund": "Refund",
+    "feature_dark_mode": "Dark Mode",
+    "feature_request": "Feature Request",
+    "support_issue": "Issue",
+    "positive_resolution": "Resolved",
+}
+
 STOPWORDS = {
     "a",
     "about",
@@ -13,6 +23,7 @@ STOPWORDS = {
     "at",
     "be",
     "but",
+    "can",
     "for",
     "from",
     "have",
@@ -51,6 +62,16 @@ def _tokens_from_texts(texts: Sequence[str]) -> list[str]:
 
 
 def build_topic_keywords(texts: Sequence[str], max_keywords: int = 3) -> list[str]:
+    signatures = [signature for text in texts if (signature := semantic_signature(text)) and signature != ("general",)]
+    semantic_keywords: list[str] = []
+    for signature in signatures:
+        for token in signature:
+            if token in SEMANTIC_BUCKET_ORDER and token not in semantic_keywords:
+                semantic_keywords.append(token)
+
+    if semantic_keywords:
+        return semantic_keywords[:max_keywords]
+
     tokens = _tokens_from_texts(texts)
     if not tokens:
         return ["general"]
@@ -62,8 +83,10 @@ def build_topic_keywords(texts: Sequence[str], max_keywords: int = 3) -> list[st
 def build_topic_label(texts: Sequence[str]) -> str:
     keywords = build_topic_keywords(texts, max_keywords=2)
     if len(keywords) == 1:
-        return keywords[0].replace("_", " ").title()
-    return " / ".join(keyword.replace("_", " ").title() for keyword in keywords)
+        return DISPLAY_NAME_MAP.get(keywords[0], keywords[0].replace("_", " ").title())
+    return " / ".join(
+        DISPLAY_NAME_MAP.get(keyword, keyword.replace("_", " ").title()) for keyword in keywords
+    )
 
 
 def build_topic_summary(texts: Sequence[str], keywords: Sequence[str] | None = None) -> str:
